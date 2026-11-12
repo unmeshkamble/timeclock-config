@@ -1,0 +1,55 @@
+name: Sign config
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Config version (increase every time, e.g. 2)"
+        required: true
+      hr_number:
+        description: "HR mobile, e.g. +919029090321"
+        required: true
+      backup_number:
+        description: "Backup mobile, e.g. +919619615880"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out config repo
+        uses: actions/checkout@v5
+
+      - name: Validate inputs and create signed config
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          VERSION: ${{ inputs.version }}
+          HR: ${{ inputs.hr_number }}
+          BACKUP: ${{ inputs.backup_number }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY" || { echo "SIGNING_KEY secret is missing"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+$ ]] || { echo "Version must be a whole number"; exit 1; }
+          [[ "$HR" =~ ^\+91[0-9]{10}$ ]] || { echo "HR number must be +91 followed by 10 digits"; exit 1; }
+          [[ "$BACKUP" =~ ^\+91[0-9]{10}$ ]] || { echo "Backup number must be +91 followed by 10 digits"; exit 1; }
+
+          printf '%s\n' "$SIGNING_KEY" > key.pem
+          printf '{\n  "version": %s,\n  "hr_number": "%s",\n  "backup_number": "%s"\n}\n' \
+            "$VERSION" "$HR" "$BACKUP" > config.json
+          openssl dgst -sha256 -sign key.pem -out sig.bin config.json
+          base64 -w0 sig.bin > config.sig
+          rm -f key.pem sig.bin
+
+          echo "Created config.json:"
+          cat config.json
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add config.json config.sig
+          git commit -m "Config version ${{ inputs.version }}"
+          git push
